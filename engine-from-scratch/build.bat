@@ -1,4 +1,4 @@
-set render=src\engine\render\render.c src\engine\render\render_init.c src\engine\render\render_util.c
+set render=src\engine\render\render.c src\engine\render\render_init.c src\engine\render\render_util.c src\engine\animation\animation.c
 set input=src\engine\input\input.c
 set physics=src\engine\physics\physics.c
 set io=src\engine\io\io.c
