@@ -13,6 +13,10 @@
 #include "engine/entity/entity.h"
 #include "engine/render/render.h"
 #include "engine/animation/animation.h"
+#include "engine/audio/audio.h"
+
+static Mix_Music *MUSIC_STAGE_1;
+static Mix_Chunk *SOUND_JUMP;
 
 static const f32 SPEED_ENEMY_LARGE = 200;
 static const f32 SPEED_ENEMY_SMALL = 4000;
@@ -50,6 +54,7 @@ static void input_handle(Body* body_player) {
 	if (global.input.up && player_is_grounded) {
 		player_is_grounded = false;
 		vely = 2000;
+		audio_sound_play(SOUND_JUMP);
 	}
 	
 	body_player->velocity[0] = velx;
@@ -110,6 +115,11 @@ int main(int argc, char* argv[]) {
 	physics_init();
 	entity_init();
 	animation_init();
+	audio_init();
+
+	audio_sound_load(&SOUND_JUMP,"assets/jump.wav");
+	audio_music_load(&MUSIC_STAGE_1,"assets/breezys_mega_quest_2_stage_1.mp3");
+	audio_music_play(MUSIC_STAGE_1);
 
 	SDL_ShowCursor(false);
 
@@ -130,7 +140,7 @@ int main(int argc, char* argv[]) {
 	u32 static_body_d_id = physics_static_body_create((vec2) { 12.5, height *0.5 - 12.5 }, (vec2) { 50, height - 50 }, COLLOSION_LAYER_TERRAIN);
 	u32 static_body_e_id = physics_static_body_create((vec2) { width * 0.5 , height *0.5 }, (vec2) {62.5, 62.5 }, COLLOSION_LAYER_TERRAIN);
 
-	usize entity_fire = entity_create((vec2){370,500},(vec2){25,25},(vec2){0},0,fire_mask,true,fire_on_hit,NULL);
+	usize entity_fire = entity_create((vec2){370,50},(vec2){25,25},(vec2){0},0,fire_mask,true,fire_on_hit,NULL);
 
 	
 
@@ -196,7 +206,7 @@ int main(int argc, char* argv[]) {
 			if(spawn_timer <= 0) {
 				spawn_timer = (f32)((rand()%200)+200)/100.0f;
 				spawn_timer *= 0.2;
-				for(u32 i =0;i<50;++i) {
+				
 					bool is_flipped = rand()%100>=50;
 
 					f32 spawn_x = is_flipped ? 540 :100;
@@ -214,7 +224,7 @@ int main(int argc, char* argv[]) {
 					Entity *entity = entity_get(entity_id);
 					Body *body = physics_body_get(entity->body_id);
 					body->velocity[0] = is_flipped ? -SPEED_ENEMY_SMALL : SPEED_ENEMY_SMALL;
-				}
+				
 			}
 
 		}
