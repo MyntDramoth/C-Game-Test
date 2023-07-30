@@ -50,36 +50,37 @@ void render_init_batch_quads(u32* vao, u32* vbo, u32* ebo) {
 	glGenVertexArrays(1, vao);
 	glBindVertexArray(*vao);
 
-	u32 indeces[MAX_BATCH_ELEMENTS];
-	for(u32 i =0, offset = 0; i < MAX_BATCH_ELEMENTS; i += 6, offset +=4) {
-		indeces[i+0] = offset+0;
-		indeces[i+1] = offset+1;
-		indeces[i+2] = offset+2;
-		indeces[i+3] = offset+2;
-		indeces[i+4] = offset+3;
-		indeces[i+5] = offset+0;
+	u32 indices[MAX_BATCH_ELEMENTS];
+	for (u32 i = 0, offset = 0; i < MAX_BATCH_ELEMENTS; i += 6, offset += 4) {
+		indices[i + 0] = offset + 0;
+		indices[i + 1] = offset + 1;
+		indices[i + 2] = offset + 2;
+		indices[i + 3] = offset + 2;
+		indices[i + 4] = offset + 3;
+		indices[i + 5] = offset + 0;
 	}
+
 	glGenBuffers(1, vbo);
 	glBindBuffer(GL_ARRAY_BUFFER, *vbo);
-	glBufferData(GL_ARRAY_BUFFER, MAX_BATCH_VERTICES * sizeof(Batch_Vertex),NULL, GL_DYNAMIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, MAX_BATCH_VERTICES * sizeof(Batch_Vertex), NULL, GL_DYNAMIC_DRAW);
 
-	//[x,y], [u,v], [r,g,b,a]
+	// [x, y], [u, v], [r, g, b, a], [texture_slot]
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex,position));
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex, position));
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex,uvs));
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex, uvs));
 	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex,color));
-	//glEnableVertexAttribArray(3);
-	//glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex,texture_slot));
+	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex, color));
+	glEnableVertexAttribArray(3);
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(Batch_Vertex), (void*)offsetof(Batch_Vertex, texture_slot));
 
 	glGenBuffers(1, ebo);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, *ebo);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, MAX_BATCH_ELEMENTS * sizeof(u32), indeces, GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, MAX_BATCH_ELEMENTS * sizeof(u32), indices, GL_STATIC_DRAW);
 
 	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER,0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
 void render_init_quad(u32* vao, u32* vbo, u32* ebo) {
@@ -141,6 +142,12 @@ void render_init_shaders(u32* default_shader, u32* shader_batch, f32 render_widt
 		GL_FALSE,
 		&projection[0][0]
 	);
+
+	for (u32 i = 0; i < 8; ++i) {
+        char name[] = "texture_slot_N";
+        sprintf(name, "texture_slot_%u", i);
+        glUniform1i(glGetUniformLocation(*shader_batch, name), i);
+    }
 }
 
 void render_init_color_texture(u32* texture) {
