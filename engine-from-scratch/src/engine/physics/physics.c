@@ -112,7 +112,7 @@ bool physics_point_intersect_aabb(vec2 point, AABB aabb) {
 void physics_init(void) {
 	state.body_list = array_list_create(sizeof(Body), 0);
 	state.static_body_list = array_list_create(sizeof(Static_Body), 0);
-
+	//currently can't have enemies taht move slower than gravity, an event queue can fix this but it's complicated
 	state.gravity = -79;
 	state.terminal_velocity = -7000;
 

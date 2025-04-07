@@ -15,12 +15,19 @@
 #include "engine/animation/animation.h"
 #include "engine/audio/audio.h"
 
+void reset(void);
+
 static u32 texture_slots[8] = {0};
 static f32 width;
 static f32 height;
 
 static Mix_Music *MUSIC_STAGE_1;
 static Mix_Chunk *SOUND_JUMP;
+static Mix_Chunk *SOUND_SHOOT;
+static Mix_Chunk *SOUND_BULLET_HIT_WALL;
+static Mix_Chunk *SOUND_HURT;
+static Mix_Chunk *SOUND_ENEMY_DEATH;
+static Mix_Chunk *SOUND_PLAYER_DEATH;
 
 static const f32 GROUNDED_TIME = 0.1;
 static const f32 SPEED_PLAYER = 250;
@@ -39,6 +46,34 @@ typedef enum collision_layer{
 	COLLISION_LAYER_PROJECTILE = 1 << 4,
 }Collision_Layer;
 
+typedef enum weapon_type {
+    WEAPON_TYPE_SHOTGUN,
+    WEAPON_TYPE_PISTOL,
+    WEAPON_TYPE_REVOLVER,
+    WEAPON_TYPE_SMG,
+    WEAPON_TYPE_ROCKET_LAUNCHER,
+    WEAPON_TYPE_COUNT,
+} Weapon_Type;
+
+typedef enum projectile_type {
+    PROJECTILE_TYPE_SMALL,
+    PROJECTILE_TYPE_LARGE,
+    PROJECTILE_TYPE_ROCKET,
+} Projectile_Type;
+
+typedef struct weapon {
+    f32 fire_rate; // Time between shots.
+    f32 recoil;
+    f32 projectile_speed;
+    Projectile_Type projectile_type;
+    vec2 sprite_size;
+    vec2 sprite_offset;
+    usize projectile_animation_id;
+    Mix_Chunk *sfx;
+} Weapon;
+
+static Weapon weapons[WEAPON_TYPE_COUNT] = {0};
+
 static u8 enemy_mask = COLLISION_LAYER_PLAYER | COLLISION_LAYER_TERRAIN;
 static u8 player_mask = COLLISION_LAYER_ENEMY | COLLISION_LAYER_TERRAIN | COLLISION_LAYER_ENEMY_PASSTHROUGH;
 static u8 fire_mask = COLLISION_LAYER_ENEMY | COLLISION_LAYER_PLAYER;
@@ -48,10 +83,11 @@ static f32 ground_timer = 0;
 static f32 shoot_timer = 0;
 static f32 spawn_timer = 0;
 
+static Weapon_Type weapon_type = WEAPON_TYPE_PISTOL;
 static bool shouldQuit = false;
 static vec2 pos;
-static vec4 player_color = {0,1,1,1};
 static bool player_is_grounded = false;
+static usize player_id;
 static usize anim_player_walk_id;
 static usize anim_player_idle_id;
 static usize anim_enemy_small_id;
@@ -59,6 +95,41 @@ static usize anim_enemy_large_id;
 static usize anim_enemy_small_enraged_id;
 static usize anim_enemy_large_enraged_id;
 static usize anim_fire_id;
+static usize anim_projectile_small_id;
+
+void projectile_on_hit(Body *self, Body *other, Hit hit) {
+	if (other->collision_layer == COLLISION_LAYER_ENEMY) {
+        Entity *projectile = entity_get(self->entity_id);
+        Entity *enemy = entity_get(other->entity_id);
+        if (projectile->animation_id == anim_projectile_small_id) {
+            if (entity_damage(other->entity_id, 1)) {
+                audio_sound_play(SOUND_ENEMY_DEATH);
+            }
+        }
+        audio_sound_play(SOUND_HURT);
+	}
+}
+
+void projectile_on_hit_static(Body *self, Static_Body *other, Hit hit) {
+        Entity *projectile = entity_get(self->entity_id);
+        if (projectile->animation_id == anim_projectile_small_id) {
+            audio_sound_play(SOUND_SHOOT);
+        }
+        entity_destroy(self->entity_id);
+}
+
+static void spawn_projectile(Projectile_Type projectile_type) {
+    Weapon weapon = weapons[weapon_type];
+    Entity *player = entity_get(player_id);
+    Body *body = physics_body_get(player->body_id);
+    Animation *animation = animation_get(player->animation_id);
+    bool is_flipped = animation->is_flipped;
+    vec2 velocity = {is_flipped ? -weapon.projectile_speed : weapon.projectile_speed, 0};
+
+    entity_create(body->aabb.position, weapon.sprite_size, weapon.sprite_offset, velocity, COLLISION_LAYER_PROJECTILE, projectile_mask, true, weapon.projectile_animation_id, projectile_on_hit, projectile_on_hit_static);
+    audio_sound_play(weapon.sfx);
+}
+
 
 static void input_handle(Body* body_player) {
 	
@@ -66,34 +137,43 @@ static void input_handle(Body* body_player) {
 		shouldQuit = true;
 	}
 
+    Animation *walk_anim = animation_get(anim_player_walk_id);
+    Animation *idle_anim = animation_get(anim_player_idle_id);
+
 	f32 velx = 0;
 	f32 vely = body_player->velocity[1];
-	Animation* walk_anim = animation_get(anim_player_walk_id);
-	Animation* idle_anim = animation_get(anim_player_idle_id);
+
 	if (global.input.right) {
 		velx += SPEED_PLAYER;
-		walk_anim->is_flipped = false;
-		idle_anim->is_flipped = false;
+        walk_anim->is_flipped = false;
+        idle_anim->is_flipped = false;
 	}
+
 	if (global.input.left) {
 		velx -= SPEED_PLAYER;
-		walk_anim->is_flipped = true;
-		idle_anim->is_flipped = true;
+        walk_anim->is_flipped = true;
+        idle_anim->is_flipped = true;
 	}
+
 	if (global.input.up && player_is_grounded) {
 		player_is_grounded = false;
 		vely = JUMP_VELOCITY;
 		audio_sound_play(SOUND_JUMP);
 	}
-	
+
 	body_player->velocity[0] = velx;
 	body_player->velocity[1] = vely;
+
+    if (global.input.shoot && shoot_timer <= 0) {
+        Weapon weapon = weapons[weapon_type];
+        shoot_timer = weapon.fire_rate;
+        spawn_projectile(weapon.projectile_type);
+    }
 }
 
 void player_on_hit(Body *self, Body *other, Hit hit) {
 	if(other->collision_layer == COLLISION_LAYER_ENEMY) {
-		player_color[0] = 1;
-		player_color[2] = 0;
+		
 	}
 }
 
@@ -104,38 +184,47 @@ void player_on_hit_static(Body *self, Static_Body *other, Hit hit) {
 }
 
 void enemy_small_on_hit_static(Body *self, Static_Body *other, Hit hit) {
-	if(hit.normal[0] > 0) {
-		self->velocity[0] = SPEED_ENEMY_SMALL;
+	Entity *entity = entity_get(self->entity_id);
+
+	if (hit.normal[0] > 0) {
+        if (entity->is_enraged) {
+            self->velocity[0] = SPEED_ENEMY_SMALL * 1.5f;
+        } else {
+            self->velocity[0] = SPEED_ENEMY_SMALL;
+        }
 	}
-	if(hit.normal[0] < 0) {
-		self->velocity[0] = -SPEED_ENEMY_SMALL;
+
+	if (hit.normal[0] < 0) {
+        if (entity->is_enraged) {
+            self->velocity[0] = -SPEED_ENEMY_SMALL * 1.5f;
+        } else {
+            self->velocity[0] = -SPEED_ENEMY_SMALL;
+        }
 	}
 }
 
 void enemy_large_on_hit_static(Body *self, Static_Body *other, Hit hit) {
-	if(hit.normal[0] > 0) {
+	 Entity *entity = entity_get(self->entity_id);
+
+	if (hit.normal[0] > 0) {
+        if (entity->is_enraged) {
+            self->velocity[0] = SPEED_ENEMY_LARGE * 1.5f;
+        } else {
             self->velocity[0] = SPEED_ENEMY_LARGE;
-    }
-	if(hit.normal[0] < 0) {
+        }
+	}
+
+	if (hit.normal[0] < 0) {
+        if (entity->is_enraged) {
+            self->velocity[0] = -SPEED_ENEMY_LARGE * 1.5f;
+        } else {
             self->velocity[0] = -SPEED_ENEMY_LARGE;
-    }
+        }
+	}
 	
 }
 
-void fire_on_hit(Body *self, Body *other, Hit hit) {
-	if(other->collision_layer == COLLISION_LAYER_ENEMY) {
-		for(usize i =0; i<entity_count();++i) {
-			Entity *entity = entity_get(i);
 
-			if(entity->body_id = hit.other_id) {
-				Body *body = physics_body_get(entity->body_id);
-				body->is_active = false;
-				entity->is_active = false;
-				break;
-			}
-		}
-	}
-}
 
 void spawn_enemy(bool is_small, bool is_enraged, bool is_flipped) {
 	f32 spawn_x = is_flipped ? width : 0;
@@ -167,6 +256,56 @@ void spawn_enemy(bool is_small, bool is_enraged, bool is_flipped) {
     entity->is_enraged = is_enraged;
 }
 
+void fire_on_hit(Body *self, Body *other, Hit hit) {
+	if (other->collision_layer == COLLISION_LAYER_ENEMY) {
+        if (other->is_active) {
+            Entity *enemy = entity_get(other->entity_id);
+            bool is_small = enemy->animation_id == anim_enemy_small_id || enemy->animation_id == anim_enemy_small_enraged_id;
+            bool is_flipped = rand() % 100 >= 50;
+            spawn_enemy(is_small, true, is_flipped);
+            entity_destroy(other->entity_id);
+        }
+	} else if (other->collision_layer == COLLISION_LAYER_PLAYER) {
+        reset();
+    }
+}
+
+void reset(void) {
+    audio_music_play(MUSIC_STAGE_1);
+
+    physics_reset();
+    entity_reset();
+
+    ground_timer = 0;
+    spawn_timer = 0;
+    shoot_timer = 0;
+
+	player_id = entity_create((vec2){100, 200}, (vec2){24, 24}, (vec2){0, 0}, (vec2){0, 0}, COLLISION_LAYER_PLAYER, player_mask, false, (usize)-1, player_on_hit, player_on_hit_static);
+
+    // Init level.
+	{
+		physics_static_body_create((vec2){width * 0.5, height - 16}, (vec2){width, 32}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){width * 0.25 - 16, 16}, (vec2){width * 0.5 - 32, 48}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){width * 0.75 + 16, 16}, (vec2){width * 0.5 - 32, 48}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){16, height * 0.5 - 3 * 32}, (vec2){32, height}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){width - 16, height * 0.5 - 3 * 32}, (vec2){32, height}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){32 + 64, height - 32 * 3 - 16}, (vec2){128, 32}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){width - 32 - 64, height - 32 * 3 - 16}, (vec2){128, 32}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){width * 0.5, height - 32 * 3 - 16}, (vec2){192, 32}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){width * 0.5, 32 * 3 + 24}, (vec2){448, 32}, COLLISION_LAYER_TERRAIN);
+		physics_static_body_create((vec2){16, height - 64}, (vec2){32, 64}, COLLISION_LAYER_ENEMY_PASSTHROUGH);
+		physics_static_body_create((vec2){width - 16, height - 64}, (vec2){32, 64}, COLLISION_LAYER_ENEMY_PASSTHROUGH);
+			
+		physics_trigger_create((vec2){width * 0.5, -4}, (vec2){64, 8}, 0, fire_mask, fire_on_hit);
+	}
+
+    entity_create((vec2){width * 0.5, 0}, (vec2){32, 64}, (vec2){0, 0}, (vec2){0, 0}, 0, 0, true, anim_fire_id, NULL, NULL);
+    entity_create((vec2){width * 0.5 + 16, -16}, (vec2){32, 64}, (vec2){0, 0}, (vec2){0, 0}, 0, 0, true, anim_fire_id, NULL, NULL);
+    entity_create((vec2){width * 0.5 - 16, -16}, (vec2){32, 64}, (vec2){0, 0}, (vec2){0, 0}, 0, 0, true, anim_fire_id, NULL, NULL);
+}
+
+
+
 int main(int argc, char* argv[]) {
 	
 	time_init(60);
@@ -178,8 +317,12 @@ int main(int argc, char* argv[]) {
 	audio_init();
 
 	audio_sound_load(&SOUND_JUMP,"assets/jump.wav");
+	audio_sound_load(&SOUND_SHOOT, "assets/shoot.wav");
+	audio_sound_load(&SOUND_BULLET_HIT_WALL, "assets/bullet_hit_wall.wav");
+	audio_sound_load(&SOUND_HURT, "assets/hurt.wav");
+	audio_sound_load(&SOUND_ENEMY_DEATH, "assets/enemy_death.wav");
+	audio_sound_load(&SOUND_PLAYER_DEATH, "assets/player_death.wav");
 	audio_music_load(&MUSIC_STAGE_1,"assets/breezys_mega_quest_2_stage_1.mp3");
-	audio_music_play(MUSIC_STAGE_1);
 
 	SDL_ShowCursor(false);
 	
@@ -219,32 +362,22 @@ int main(int argc, char* argv[]) {
 	anim_player_walk_id = animation_create(adef_player_walk_id, true);
 	anim_player_idle_id = animation_create(adef_player_idle_id, false);
 	
-	// Init level.
-	{
-		physics_static_body_create((vec2){width * 0.5, height - 16}, (vec2){width, 32}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){width * 0.25 - 16, 16}, (vec2){width * 0.5 - 32, 48}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){width * 0.75 + 16, 16}, (vec2){width * 0.5 - 32, 48}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){16, height * 0.5 - 3 * 32}, (vec2){32, height}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){width - 16, height * 0.5 - 3 * 32}, (vec2){32, height}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){32 + 64, height - 32 * 3 - 16}, (vec2){128, 32}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){width - 32 - 64, height - 32 * 3 - 16}, (vec2){128, 32}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){width * 0.5, height - 32 * 3 - 16}, (vec2){192, 32}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){width * 0.5, 32 * 3 + 24}, (vec2){448, 32}, COLLISION_LAYER_TERRAIN);
-		physics_static_body_create((vec2){16, height - 64}, (vec2){32, 64}, COLLISION_LAYER_ENEMY_PASSTHROUGH);
-		physics_static_body_create((vec2){width - 16, height - 64}, (vec2){32, 64}, COLLISION_LAYER_ENEMY_PASSTHROUGH);
-			
-		//physics_body_create((vec2){width * 0.5, -4}, (vec2){64, 8},(vec2){0} ,COLLISION_LAYER_TERRAIN, fire_mask,true,fire_on_hit,NULL);
-	}
+	usize adef_projectile_small_id = animation_def_create(&sprite_sheet_props, 1, 0, (u8[]){0}, 1);
+    anim_projectile_small_id = animation_create(adef_projectile_small_id, false);
 
-	
-	entity_create((vec2){width * 0.5, 0}, (vec2){32, 64}, (vec2){0, 0}, (vec2){0, 0}, COLLISION_LAYER_TERRAIN, fire_mask, true, anim_fire_id, fire_on_hit, NULL);
-    entity_create((vec2){width * 0.5 + 16, -16}, (vec2){32, 64}, (vec2){0, 0}, (vec2){0, 0}, COLLISION_LAYER_TERRAIN, fire_mask, true, anim_fire_id, fire_on_hit, NULL);
-    entity_create((vec2){width * 0.5 - 16, -16}, (vec2){32, 64}, (vec2){0, 0}, (vec2){0, 0}, COLLISION_LAYER_TERRAIN, fire_mask, true, anim_fire_id, fire_on_hit, NULL);
-	//puts("hello world!");
+    // Init weapons.
+    weapons[WEAPON_TYPE_PISTOL] = (Weapon){
+        .projectile_type = PROJECTILE_TYPE_SMALL,
+            .projectile_speed = 200,
+            .fire_rate = 0.1,
+            .recoil = 2.0,
+            .projectile_animation_id = anim_projectile_small_id,
+            .sprite_size = {16, 16},
+            .sprite_offset = {0, 0},
+            .sfx = SOUND_SHOOT
+    };
 
-
-	usize player_id = entity_create((vec2){100,200},(vec2){24,24}, (vec2){0,0},(vec2){0,0}, COLLISION_LAYER_PLAYER, player_mask,false,anim_player_idle_id, player_on_hit, player_on_hit_static);
-	Entity* player = entity_get(player_id);
+	reset();
 
 	while (!shouldQuit) {
 		time_update();
@@ -262,6 +395,11 @@ int main(int argc, char* argv[]) {
 				break;
 			}
 		}
+
+		shoot_timer -= global.time.delta;
+        spawn_timer -= global.time.delta;
+        ground_timer -= global.time.delta;
+
 		Entity* player = entity_get(player_id);
 		Body* player_body = physics_body_get(player->body_id);
 		
@@ -281,7 +419,6 @@ int main(int argc, char* argv[]) {
 
 		//spawn enemies
 		{
-			spawn_timer -= global.time.delta;
 			if(spawn_timer <= 0) {
 				spawn_timer = (f32)((rand() % 200) + 200) / 100.0f;
 				spawn_timer *= 0.2;
